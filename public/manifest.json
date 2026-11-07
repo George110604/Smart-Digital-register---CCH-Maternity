@@ -1,2 +1,2 @@
-{ "name": "Smart Digital Register", "short_name": "Register", "start_url": "/", "display": "standalone",
+{ "name": "Smart Digital Register", "short_name": "Register", "start_url": "./", "display": "standalone",
   "background_color": "#ffffff", "theme_color": "#1f4e79" }

@@ -49,7 +49,7 @@ class NetError extends Error {}
 async function api(path, { method = 'GET', body, raw } = {}) {
   let res;
   try {
-    res = await fetch(path, {
+    res = await fetch(((window.APP_CONFIG && window.APP_CONFIG.API_BASE) || '') + path, {
       method, headers: { 'Content-Type': 'application/json', ...(state.token ? { Authorization: 'Bearer ' + state.token } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -336,10 +336,18 @@ views.admin = async function () {
     <div id="ulist" style="margin-top:10px"></div>
     <h3>Change my password</h3><form id="cp" class="grid"><div><label>Current</label><input name="current" type="password" required></div>
       <div><label>New (8+ chars)</label><input name="next" type="password" minlength="8" required></div><div style="align-self:end"><button class="btn">Change</button></div></form></div>`;
-  const users = async () => { try { const u = await api('/api/users'); $('#ulist').innerHTML = `<table><tr><th>User</th><th>Name</th><th>Role</th></tr>${u.map((x) => `<tr><td>${esc(x.username)}</td><td>${esc(x.name)}</td><td>${esc(x.role)}</td></tr>`).join('')}</table>`; } catch (e) { toast(e.message); } };
+  const users = async () => { try { const u = await api('/api/users'); $('#ulist').innerHTML = `<table><tr><th>User</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>${u.map((x) => `<tr${x.active ? '' : ' class="muted"'}><td>${esc(x.username)}</td><td>${esc(x.name)}</td><td>${esc(x.role)}</td><td>${x.active ? 'Active' : 'Deactivated'}</td><td>${x.id === state.user.id ? '<span class="muted">(you)</span>' : `<button class="btn ${x.active ? 'danger' : 'secondary'}" data-uid="${x.id}" data-uname="${esc(x.username)}" data-uset="${x.active ? 0 : 1}">${x.active ? 'Deactivate' : 'Reactivate'}</button>`}</td></tr>`).join('')}</table>`; } catch (e) { toast(e.message); } };
   users();
   api('/api/sus/summary').then((s) => { $('#susum').textContent = `SUS responses: ${s.responses}. Mean: ${s.mean ?? '-'} (benchmark ${s.benchmark}).`; }).catch(() => {});
   view.onclick = async (e) => {
+    const ub = e.target.closest('[data-uid]');
+    if (ub) {
+      const on = ub.dataset.uset === '1';
+      if (!on && !confirm('Deactivate ' + ub.dataset.uname + '? They will be logged out and unable to sign in. Their records are kept.')) return;
+      try { await api('/api/users/' + ub.dataset.uid + '/active', { method: 'POST', body: { active: on } }); toast(on ? 'User reactivated' : 'User deactivated'); users(); }
+      catch (err) { toast(err.message); }
+      return;
+    }
     const b = e.target.closest('[data-exp]'); if (!b) return;
     try { const r = await api(`/api/export/${b.dataset.exp}.csv`, { raw: true }); const blob = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = b.dataset.exp + '.csv'; a.click(); URL.revokeObjectURL(a.href); }
     catch (err) { toast(err.message); }
@@ -349,6 +357,6 @@ views.admin = async function () {
 };
 
 // ---------- start ----------
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 renderShell();
 if (state.token && state.user) { go('dashboard'); syncQueue(true); } else renderLogin();

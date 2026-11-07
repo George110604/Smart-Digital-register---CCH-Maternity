@@ -46,6 +46,21 @@ const call = async (p, method = 'GET', body, tk = token) => {
   // stats + SUS
   r = await call('/api/stats'); assert.equal(r.body.observations, 1); assert.equal(r.body.offline_synced, 1);
   r = await call('/api/sus', 'POST', { answers: [5, 1, 5, 1, 5, 1, 5, 1, 5, 1] }); assert.equal(r.body.score, 100);
+  // deactivate / reactivate users
+  r = await call('/api/login', 'POST', { username: 'admin', password: 'admin123' }, null);
+  const adminTok = r.body.token;
+  assert.equal((await call('/api/users', 'POST', { username: 'temp1', name: 'Temp User', role: 'midwife', password: 'temp12345' }, adminTok)).status, 201);
+  r = await call('/api/login', 'POST', { username: 'temp1', password: 'temp12345' }, null);
+  assert.equal(r.status, 200); const tempTok = r.body.token;
+  const list = (await call('/api/users', 'GET', null, adminTok)).body;
+  const tempId = list.find((u) => u.username === 'temp1').id, adminId = list.find((u) => u.username === 'admin').id;
+  assert.equal((await call(`/api/users/${tempId}/active`, 'POST', { active: false }, tempTok)).status, 403);
+  assert.equal((await call(`/api/users/${adminId}/active`, 'POST', { active: false }, adminTok)).status, 400);
+  assert.equal((await call(`/api/users/${tempId}/active`, 'POST', { active: false }, adminTok)).status, 200);
+  assert.equal((await call('/api/me', 'GET', null, tempTok)).status, 401);
+  assert.equal((await call('/api/login', 'POST', { username: 'temp1', password: 'temp12345' }, null)).status, 401);
+  assert.equal((await call(`/api/users/${tempId}/active`, 'POST', { active: true }, adminTok)).status, 200);
+  assert.equal((await call('/api/login', 'POST', { username: 'temp1', password: 'temp12345' }, null)).status, 200);
   // static + traversal
   assert.equal((await fetch(base + '/')).status, 200);
   assert.equal((await fetch(base + '/..%2fserver.js')).status === 200, false);

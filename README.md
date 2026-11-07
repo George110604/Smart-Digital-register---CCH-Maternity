@@ -25,3 +25,6 @@ admin/admin123, midwife1/midwife123, doctor1/doctor123, records1/records123
 Thresholds in rules.js are illustrative. They need sign-off by your clinical advisory panel,
 the system needs HTTPS, hospital approval and MRCZ ethics clearance, and passwords must be changed.
 Run in parallel with the paper register; alerts are advisory only.
+
+## Putting it online
+See START-HERE.md (Render + GitHub, step by step).

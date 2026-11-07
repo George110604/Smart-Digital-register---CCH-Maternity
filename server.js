@@ -9,11 +9,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const cors = require('cors');
 const Rules = require('./public/rules.js');
 
 const PORT = process.env.PORT || 3000;
 const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'data', 'register.db');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+// Websites allowed to call the API from another address (e.g. a GitHub Pages copy of the frontend).
+// Set ALLOWED_ORIGINS on the host as a comma-separated list to change it. Origins only: no path, no trailing slash.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://george110604.github.io,http://localhost:3000,http://127.0.0.1:3000')
+  .split(',').map((x) => x.trim()).filter(Boolean);
+const corsMiddleware = cors({
+  origin: ALLOWED_ORIGINS,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+});
 fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
 
 const db = new DatabaseSync(DB_FILE);
@@ -154,7 +164,7 @@ function cleanObservation(b) {
 // ---------- API routes ----------
 async function handleApi(req, res, url) {
   const route = `${req.method} ${url.pathname}`;
-  const ip = req.socket.remoteAddress || 'x';
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'x';
 
   if (route === 'POST /api/login') {
     if (tooManyAttempts(ip)) throw new HttpError(429, 'Too many failed attempts. Try again in 10 minutes.');
@@ -179,6 +189,7 @@ async function handleApi(req, res, url) {
   }
 
   const user = authUser(req);
+  let m0;
 
   if (route === 'POST /api/logout') {
     need(user);
@@ -215,6 +226,27 @@ async function handleApi(req, res, url) {
     catch { throw new HttpError(409, 'Username already exists'); }
     audit(user.id, 'user_created', b.username);
     return send(res, 201, { ok: true });
+  }
+
+  m0 = url.pathname.match(/^\/api\/users\/(\d+)\/active$/);
+  if (m0 && req.method === 'POST') {
+    need(user, 'admin');
+    const { active } = await readBody(req);
+    if (typeof active !== 'boolean') throw new HttpError(400, 'active must be true or false');
+    const id = Number(m0[1]);
+    const target = db.prepare('SELECT id,username,role,active FROM users WHERE id=?').get(id);
+    if (!target) throw new HttpError(404, 'User not found');
+    if (!active) {
+      if (id === user.id) throw new HttpError(400, 'You cannot deactivate your own account');
+      if (target.role === 'admin' && target.active) {
+        const otherAdmins = db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin' AND active=1 AND id<>?").get(id).n;
+        if (otherAdmins === 0) throw new HttpError(400, 'At least one active admin must remain');
+      }
+    }
+    db.prepare('UPDATE users SET active=? WHERE id=?').run(active ? 1 : 0, id);
+    if (!active) db.prepare('DELETE FROM sessions WHERE user_id=?').run(id); // log them out immediately
+    audit(user.id, active ? 'user_reactivated' : 'user_deactivated', target.username);
+    return send(res, 200, { ok: true });
   }
 
   // ----- patients -----
@@ -391,8 +423,14 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
-    if (url.pathname.startsWith('/api/')) await handleApi(req, res, url);
-    else serveStatic(req, res, url);
+    if (url.pathname.startsWith('/api/')) {
+      // CORS first; for browser pre-checks (OPTIONS) the middleware answers and stops here
+      const passed = await new Promise((resolve) => {
+        corsMiddleware(req, res, () => resolve(true));
+        res.on('finish', () => resolve(false));
+      });
+      if (passed) await handleApi(req, res, url);
+    } else serveStatic(req, res, url);
   } catch (e) {
     if (e instanceof HttpError) return send(res, e.status, { error: e.message });
     console.error(e);

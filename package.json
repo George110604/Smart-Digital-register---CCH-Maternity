@@ -1,0 +1,17 @@
+{
+  "name": "smart-digital-register",
+  "version": "0.1.0",
+  "description": "Smart digital register with clinical decision support for a maternity ward (dissertation prototype)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "cors": "^2.8.6"
+  }
+}

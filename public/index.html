@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Digital Register - CCH Maternity</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar" hidden>
+  <div class="brand">Smart Digital Register <small>CCH Maternity</small></div>
+  <nav id="nav"></nav>
+  <div class="right">
+    <span id="netstate" class="pill"></span>
+    <span id="who"></span>
+    <button id="logout" class="link">Log out</button>
+  </div>
+</header>
+<main id="view"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="rules.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

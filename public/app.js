@@ -334,13 +334,46 @@ views.admin = async function () {
       <div><label>Role</label><select name="role"><option>midwife</option><option>doctor</option><option>records</option><option>admin</option></select></div>
       <div><label>Password (8+ chars)</label><input name="password" type="password" minlength="8" required></div>
       <div style="align-self:end"><button class="btn">Create</button></div></form>
-    <div id="ulist" style="margin-top:10px"></div>
+    <div id="ulist" style="margin-top:10px"></div><div id="uedit"></div>
     <h3>Change my password</h3><form id="cp" class="grid"><div><label>Current</label><input name="current" type="password" required></div>
       <div><label>New (8+ chars)</label><input name="next" type="password" minlength="8" required></div><div style="align-self:end"><button class="btn">Change</button></div></form></div>`;
-  const users = async () => { try { const u = await api('/api/users'); $('#ulist').innerHTML = `<table><tr><th>User</th><th>Name</th><th>Role</th></tr>${u.map((x) => `<tr><td>${esc(x.username)}</td><td>${esc(x.name)}</td><td>${esc(x.role)}</td></tr>`).join('')}</table>`; } catch (e) { toast(e.message); } };
+  let USERS = [];
+  const users = async () => {
+    try {
+      USERS = await api('/api/users');
+      $('#ulist').innerHTML = `<table><tr><th>User</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>${USERS.map((x) => `<tr><td>${esc(x.username)}</td><td>${esc(x.name)}</td><td>${esc(x.role)}</td>
+        <td>${x.active ? '<span style="color:var(--green)">Active</span>' : '<span class="error">Deactivated</span>'}</td>
+        <td><button class="btn secondary" data-uedit="${x.id}">Edit</button> <button class="btn ${x.active ? 'danger' : 'secondary'}" data-utoggle="${x.id}">${x.active ? 'Deactivate' : 'Reactivate'}</button></td></tr>`).join('')}</table>`;
+    } catch (e) { toast(e.message); }
+  };
   users();
   api('/api/sus/summary').then((s) => { $('#susum').textContent = `SUS responses: ${s.responses}. Mean: ${s.mean ?? '-'} (benchmark ${s.benchmark}).`; }).catch(() => {});
   view.onclick = async (e) => {
+    const ue = e.target.closest('[data-uedit]'), ut = e.target.closest('[data-utoggle]');
+    if (ue) {
+      const u = USERS.find((x) => x.id === Number(ue.dataset.uedit)); if (!u) return;
+      $('#uedit').innerHTML = `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Edit user: ${esc(u.username)}</h3><form id="ef" class="grid" autocomplete="off">
+        <div><label>Username</label><input name="username" value="${esc(u.username)}" autocomplete="off" required></div>
+        <div><label>Full name</label><input name="name" value="${esc(u.name)}" autocomplete="off" required></div>
+        <div><label>Role</label><select name="role">${['midwife', 'doctor', 'records', 'admin'].map((r) => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+        <div><label>New password (leave blank to keep)</label><input name="password" type="password" minlength="8" autocomplete="new-password"></div>
+        <div style="align-self:end"><button class="btn">Save changes</button> <button type="button" class="btn secondary" id="ecancel">Cancel</button></div></form></div>`;
+      $('#ecancel').onclick = () => { $('#uedit').innerHTML = ''; };
+      $('#ef').onsubmit = async (ev) => {
+        ev.preventDefault();
+        const body = Object.fromEntries(new FormData(ev.target).entries());
+        if (!body.password) delete body.password;
+        try { await api('/api/users/' + u.id, { method: 'PUT', body }); toast('User updated'); $('#uedit').innerHTML = ''; users(); } catch (err) { toast(err.message, 5000); }
+      };
+      $('#uedit').scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    if (ut) {
+      const u = USERS.find((x) => x.id === Number(ut.dataset.utoggle)); if (!u) return;
+      if (u.active && !confirm(`Deactivate ${u.username}? They will be logged out and unable to log in until reactivated.`)) return;
+      try { await api('/api/users/' + u.id, { method: 'PUT', body: { active: !u.active } }); toast(u.active ? 'User deactivated' : 'User reactivated'); users(); } catch (err) { toast(err.message, 5000); }
+      return;
+    }
     const b = e.target.closest('[data-exp]'); if (!b) return;
     try { const r = await api(`/api/export/${b.dataset.exp}.csv`, { raw: true }); const blob = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = b.dataset.exp + '.csv'; a.click(); URL.revokeObjectURL(a.href); }
     catch (err) { toast(err.message); }

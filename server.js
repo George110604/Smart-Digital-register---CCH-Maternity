@@ -9,21 +9,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
-const cors = require('cors');
 const Rules = require('./public/rules.js');
 
 const PORT = process.env.PORT || 3000;
 const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'data', 'register.db');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-// Websites allowed to call the API from another address (e.g. a GitHub Pages copy of the frontend).
-// Set ALLOWED_ORIGINS on the host as a comma-separated list to change it. Origins only: no path, no trailing slash.
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://george110604.github.io,http://localhost:3000,http://127.0.0.1:3000')
-  .split(',').map((x) => x.trim()).filter(Boolean);
-const corsMiddleware = cors({
-  origin: ALLOWED_ORIGINS,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-});
 fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
 
 const db = new DatabaseSync(DB_FILE);
@@ -164,7 +154,7 @@ function cleanObservation(b) {
 // ---------- API routes ----------
 async function handleApi(req, res, url) {
   const route = `${req.method} ${url.pathname}`;
-  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'x';
+  const ip = req.socket.remoteAddress || 'x';
 
   if (route === 'POST /api/login') {
     if (tooManyAttempts(ip)) throw new HttpError(429, 'Too many failed attempts. Try again in 10 minutes.');
@@ -189,7 +179,6 @@ async function handleApi(req, res, url) {
   }
 
   const user = authUser(req);
-  let m0;
 
   if (route === 'POST /api/logout') {
     need(user);
@@ -228,24 +217,42 @@ async function handleApi(req, res, url) {
     return send(res, 201, { ok: true });
   }
 
-  m0 = url.pathname.match(/^\/api\/users\/(\d+)\/active$/);
-  if (m0 && req.method === 'POST') {
+  let um = url.pathname.match(/^\/api\/users\/(\d+)$/);
+  if (um && req.method === 'PUT') {
     need(user, 'admin');
-    const { active } = await readBody(req);
-    if (typeof active !== 'boolean') throw new HttpError(400, 'active must be true or false');
-    const id = Number(m0[1]);
-    const target = db.prepare('SELECT id,username,role,active FROM users WHERE id=?').get(id);
+    const id = Number(um[1]);
+    const target = db.prepare('SELECT * FROM users WHERE id=?').get(id);
     if (!target) throw new HttpError(404, 'User not found');
-    if (!active) {
-      if (id === user.id) throw new HttpError(400, 'You cannot deactivate your own account');
-      if (target.role === 'admin' && target.active) {
-        const otherAdmins = db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin' AND active=1 AND id<>?").get(id).n;
-        if (otherAdmins === 0) throw new HttpError(400, 'At least one active admin must remain');
-      }
+    const b = await readBody(req);
+    const username = b.username !== undefined ? String(b.username).trim() : target.username;
+    const name = b.name !== undefined ? String(b.name).trim().slice(0, 80) : target.name;
+    const role = b.role !== undefined ? b.role : target.role;
+    const active = b.active !== undefined ? (b.active ? 1 : 0) : target.active;
+    if (!/^[a-z0-9._-]{3,30}$/i.test(username)) throw new HttpError(400, 'Username: 3-30 letters, numbers, . _ -');
+    if (!name) throw new HttpError(400, 'Name is required');
+    if (!['admin', 'doctor', 'midwife', 'records'].includes(role)) throw new HttpError(400, 'Invalid role');
+    if (b.password !== undefined && b.password !== '' && String(b.password).length < 8) throw new HttpError(400, 'New password must be at least 8 characters');
+    if (id === user.id && !active) throw new HttpError(400, 'You cannot deactivate your own account');
+    if (id === user.id && role !== 'admin') throw new HttpError(400, 'You cannot remove your own admin role');
+    if (target.role === 'admin' && target.active && (role !== 'admin' || !active)) {
+      const others = db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin' AND active=1 AND id<>?").get(id).n;
+      if (!others) throw new HttpError(400, 'At least one active admin must remain');
     }
-    db.prepare('UPDATE users SET active=? WHERE id=?').run(active ? 1 : 0, id);
-    if (!active) db.prepare('DELETE FROM sessions WHERE user_id=?').run(id); // log them out immediately
-    audit(user.id, active ? 'user_reactivated' : 'user_deactivated', target.username);
+    try {
+      db.prepare('UPDATE users SET username=?, name=?, role=?, active=? WHERE id=?').run(username, name, role, active, id);
+    } catch { throw new HttpError(409, 'Username already exists'); }
+    if (b.password) {
+      const salt = crypto.randomBytes(16).toString('hex');
+      db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(String(b.password), salt), id);
+    }
+    if (!active || b.password || role !== target.role) db.prepare('DELETE FROM sessions WHERE user_id=?').run(id);
+    const changes = [];
+    if (username !== target.username) changes.push(`username ${target.username}->${username}`);
+    if (name !== target.name) changes.push('name');
+    if (role !== target.role) changes.push(`role ${target.role}->${role}`);
+    if (active !== target.active) changes.push(active ? 'reactivated' : 'deactivated');
+    if (b.password) changes.push('password reset');
+    audit(user.id, 'user_updated', `${target.username}: ${changes.join(', ') || 'no change'}`);
     return send(res, 200, { ok: true });
   }
 
@@ -423,14 +430,8 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
-    if (url.pathname.startsWith('/api/')) {
-      // CORS first; for browser pre-checks (OPTIONS) the middleware answers and stops here
-      const passed = await new Promise((resolve) => {
-        corsMiddleware(req, res, () => resolve(true));
-        res.on('finish', () => resolve(false));
-      });
-      if (passed) await handleApi(req, res, url);
-    } else serveStatic(req, res, url);
+    if (url.pathname.startsWith('/api/')) await handleApi(req, res, url);
+    else serveStatic(req, res, url);
   } catch (e) {
     if (e instanceof HttpError) return send(res, e.status, { error: e.message });
     console.error(e);
